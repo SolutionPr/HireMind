@@ -1,0 +1,551 @@
+{% extends 'interview/base.html' %}
+{% load static %}
+
+{% block title %}Interview — InterviewAI{% endblock %}
+
+{% block content %}
+<div class="interview-page">
+    <div class="interview-header">
+        <h1 class="interview-title">Technical Interview</h1>
+        <p class="interview-candidate">{{ session.candidate_name|default:"Candidate" }}</p>
+        <div class="skills-tags">
+            {% for skill in session.skills %}
+            <span class="skill-tag">{{ skill }}</span>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill" style="width: {{ session.progress_percent }}%"></div>
+        </div>
+        <div class="progress-text">
+            <span id="progressText">Question <span id="currentQ">{{ session.current_question_index|add:1 }}</span> of {{
+                session.total_questions }}</span>
+            <span id="progressPercent">{{ session.progress_percent }}%</span>
+        </div>
+    </div>
+
+    <!-- Question Card -->
+    <div class="question-card glass-card" id="questionCard">
+        <div class="question-meta">
+            <span class="question-skill" id="questionSkill">Loading...</span>
+            <span class="question-difficulty" id="questionDifficulty">—</span>
+        </div>
+        <h2 class="question-text" id="questionText">Loading question...</h2>
+
+        <!-- Speaker button to replay the question -->
+        <button class="btn-voice btn-speak" id="speakBtn" title="Listen to question">
+            🔊 <span>Listen</span>
+        </button>
+
+        <div class="answer-section">
+            <div class="answer-input-wrapper">
+                <textarea class="answer-input" id="answerInput"
+                    placeholder="Type your answer or click the mic 🎤 to speak..." rows="6"></textarea>
+                <!-- Mic button for speech-to-text -->
+                <button class="btn-mic" id="micBtn" title="Click to speak your answer">
+                    <span class="mic-icon" id="micIcon">🎤</span>
+                    <span class="mic-pulse" id="micPulse"></span>
+                </button>
+            </div>
+            <div class="mic-status" id="micStatus" style="display: none;">
+                <span class="mic-status-dot"></span>
+                <span class="mic-status-text">Listening... Speak your answer</span>
+            </div>
+            <div class="answer-actions">
+                <span class="char-count" id="charCount">0 characters</span>
+                <button class="btn btn-primary" id="submitAnswer" disabled>
+                    <span class="btn-text">Submit Answer</span>
+                    <span class="btn-loader" style="display: none;">
+                        <span class="spinner"></span> Evaluating...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback Card (shown after answer) -->
+    <div class="feedback-card glass-card" id="feedbackCard" style="display: none;">
+        <div class="feedback-header">
+            <div class="feedback-score-circle" id="feedbackScoreCircle">
+                <span class="feedback-score-value" id="feedbackScore">0</span>
+                <span class="feedback-score-label">/10</span>
+            </div>
+        </div>
+        <p class="feedback-text" id="feedbackText"></p>
+        <div class="voice-analysis" id="voiceAnalysis" style="display: none;">
+            <div class="voice-title">Voice Analysis</div>
+            <div class="voice-item">
+                <span class="voice-label">Volume</span>
+                <span class="voice-value" id="voiceVolume">—</span>
+            </div>
+            <div class="voice-item">
+                <span class="voice-label">Speaking Rate</span>
+                <span class="voice-value" id="voiceRate">—</span>
+            </div>
+            <div class="voice-item">
+                <span class="voice-label">Stability</span>
+                <span class="voice-value" id="voiceStability">—</span>
+            </div>
+            <div class="voice-item">
+                <span class="voice-label">Confidence</span>
+                <span class="voice-badge" id="voiceConfidence">—</span>
+            </div>
+            <p class="voice-note" id="voiceNote">Based on mic input only.</p>
+        </div>
+        <button class="btn btn-primary" id="nextQuestion">
+            <span id="nextBtnText">Next Question →</span>
+        </button>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Generating your report...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const SESSION_ID = {{ session.pk }};
+    let currentQuestionId = null;
+    let isRecording = false;
+    let recognition = null;
+    let audioContext = null;
+    let analyser = null;
+    let micStream = null;
+    let analyserFrameId = null;
+    let voiceMetrics = null;
+    let lastVoiceAnalysis = null;
+    let voiceTranscript = '';
+
+    function resetVoiceMetrics() {
+        voiceMetrics = {
+            samples: [],
+            startTime: null,
+            endTime: null,
+            hadAudio: false,
+        };
+        voiceTranscript = '';
+        lastVoiceAnalysis = null;
+    }
+
+    function startAudioAnalysis() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            micStream = stream;
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 2048;
+            source.connect(analyser);
+
+            const dataArray = new Float32Array(analyser.fftSize);
+            voiceMetrics.startTime = performance.now();
+
+            const sample = () => {
+                analyser.getFloatTimeDomainData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const v = dataArray[i];
+                    sum += v * v;
+                }
+                const rms = Math.sqrt(sum / dataArray.length);
+                voiceMetrics.samples.push(rms);
+                voiceMetrics.hadAudio = true;
+                analyserFrameId = requestAnimationFrame(sample);
+            };
+            sample();
+        }).catch(() => {
+            // If mic access is denied, we skip voice analysis silently.
+        });
+    }
+
+    function stopAudioAnalysis() {
+        if (analyserFrameId) {
+            cancelAnimationFrame(analyserFrameId);
+            analyserFrameId = null;
+        }
+        if (voiceMetrics && voiceMetrics.startTime) {
+            voiceMetrics.endTime = performance.now();
+        }
+        if (micStream) {
+            micStream.getTracks().forEach(t => t.stop());
+            micStream = null;
+        }
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+    }
+
+    function classifyVolume(avgRms) {
+        if (avgRms < 0.03) return 'Low';
+        if (avgRms < 0.08) return 'Normal';
+        return 'High';
+    }
+
+    function classifyRate(wpm) {
+        if (!wpm || wpm <= 0) return 'Unknown';
+        if (wpm < 110) return 'Slow';
+        if (wpm <= 170) return 'Normal';
+        return 'Fast';
+    }
+
+    function classifyStability(stddev) {
+        if (!stddev || stddev <= 0) return 'Unknown';
+        if (stddev < 0.012) return 'Steady';
+        if (stddev < 0.03) return 'Moderate';
+        return 'Variable';
+    }
+
+    function deriveConfidence(volumeLabel, rateLabel, stabilityLabel) {
+        let score = 0;
+        if (volumeLabel === 'Normal' || volumeLabel === 'High') score += 1;
+        if (rateLabel === 'Normal') score += 1;
+        if (stabilityLabel === 'Moderate') score += 1;
+        if (score >= 2) return 'High';
+        if (score === 1) return 'Medium';
+        return 'Low';
+    }
+
+    function computeVoiceAnalysis() {
+        if (!voiceMetrics || !voiceMetrics.hadAudio || voiceMetrics.samples.length < 10) {
+            return null;
+        }
+        const samples = voiceMetrics.samples;
+        const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+        const variance = samples.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / samples.length;
+        const stddev = Math.sqrt(variance);
+
+        const durationMs = Math.max(1, (voiceMetrics.endTime || performance.now()) - voiceMetrics.startTime);
+        const durationMin = durationMs / 60000;
+        const words = voiceTranscript.trim().split(/\s+/).filter(Boolean).length;
+        const wpm = durationMin > 0 ? Math.round(words / durationMin) : 0;
+
+        const volumeLabel = classifyVolume(avg);
+        const rateLabel = classifyRate(wpm);
+        const stabilityLabel = classifyStability(stddev);
+        const confidenceLabel = deriveConfidence(volumeLabel, rateLabel, stabilityLabel);
+
+        return {
+            volumeLabel,
+            rateLabel,
+            stabilityLabel,
+            confidenceLabel,
+            wpm,
+        };
+    }
+
+    function renderVoiceAnalysis(data) {
+        if (!data) {
+            voiceAnalysis.style.display = 'none';
+            return;
+        }
+        voiceVolume.textContent = data.volumeLabel;
+        voiceRate.textContent = data.rateLabel === 'Unknown' ? 'Unknown' : `${data.rateLabel} (${data.wpm} wpm)`;
+        voiceStability.textContent = data.stabilityLabel;
+        voiceConfidence.textContent = data.confidenceLabel;
+        voiceConfidence.className = 'voice-badge badge-' + data.confidenceLabel.toLowerCase();
+        voiceAnalysis.style.display = 'block';
+    }
+
+    // DOM Elements
+    const questionText = document.getElementById('questionText');
+    const questionSkill = document.getElementById('questionSkill');
+    const questionDifficulty = document.getElementById('questionDifficulty');
+    const answerInput = document.getElementById('answerInput');
+    const submitBtn = document.getElementById('submitAnswer');
+    const charCount = document.getElementById('charCount');
+    const questionCard = document.getElementById('questionCard');
+    const feedbackCard = document.getElementById('feedbackCard');
+    const feedbackScore = document.getElementById('feedbackScore');
+    const feedbackScoreCircle = document.getElementById('feedbackScoreCircle');
+    const feedbackText = document.getElementById('feedbackText');
+    const voiceAnalysis = document.getElementById('voiceAnalysis');
+    const voiceVolume = document.getElementById('voiceVolume');
+    const voiceRate = document.getElementById('voiceRate');
+    const voiceStability = document.getElementById('voiceStability');
+    const voiceConfidence = document.getElementById('voiceConfidence');
+    const voiceNote = document.getElementById('voiceNote');
+    const nextBtn = document.getElementById('nextQuestion');
+    const nextBtnText = document.getElementById('nextBtnText');
+    const progressFill = document.getElementById('progressFill');
+    const progressPercent = document.getElementById('progressPercent');
+    const currentQ = document.getElementById('currentQ');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const speakBtn = document.getElementById('speakBtn');
+    const micBtn = document.getElementById('micBtn');
+    const micIcon = document.getElementById('micIcon');
+    const micPulse = document.getElementById('micPulse');
+    const micStatus = document.getElementById('micStatus');
+
+    // ==========================================
+    //  TEXT-TO-SPEECH — Read questions aloud
+    // ==========================================
+    function speakQuestion(text) {
+        if ('speechSynthesis' in window) {
+            // Cancel any ongoing speech
+            window.speechSynthesis.cancel();
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 0.95;
+            utterance.pitch = 1;
+            utterance.volume = 1;
+
+            // Try to pick a good English voice
+            const voices = window.speechSynthesis.getVoices();
+            const englishVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) ||
+                voices.find(v => v.lang.startsWith('en'));
+            if (englishVoice) utterance.voice = englishVoice;
+
+            // Visual feedback while speaking
+            speakBtn.classList.add('speaking');
+            utterance.onend = () => speakBtn.classList.remove('speaking');
+            utterance.onerror = () => speakBtn.classList.remove('speaking');
+
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+
+    // Ensure voices load (they load async in some browsers)
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.onvoiceschanged = () => { };
+        window.speechSynthesis.getVoices();
+    }
+
+    // Speak button click
+    speakBtn.addEventListener('click', () => {
+        speakQuestion(questionText.textContent);
+    });
+
+    // ==========================================
+    //  SPEECH-TO-TEXT — Voice answers
+    // ==========================================
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        let finalTranscript = '';
+
+        recognition.onstart = () => {
+            isRecording = true;
+            resetVoiceMetrics();
+            startAudioAnalysis();
+            micBtn.classList.add('recording');
+            micIcon.textContent = '⏹️';
+            micPulse.style.display = 'block';
+            micStatus.style.display = 'flex';
+        };
+
+        recognition.onresult = (event) => {
+            let interimTranscript = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + ' ';
+                    voiceTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            // Show in textarea (keep any previously typed text)
+            const existingText = answerInput.dataset.typedText || '';
+            answerInput.value = existingText + finalTranscript + interimTranscript;
+            updateCharCount();
+        };
+
+        recognition.onend = () => {
+            // Save final transcript and reset
+            if (isRecording) {
+                const existingText = answerInput.dataset.typedText || '';
+                answerInput.value = existingText + finalTranscript;
+                answerInput.dataset.typedText = answerInput.value;
+                finalTranscript = '';
+            }
+            stopAudioAnalysis();
+            lastVoiceAnalysis = computeVoiceAnalysis();
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            micIcon.textContent = '🎤';
+            micPulse.style.display = 'none';
+            micStatus.style.display = 'none';
+            updateCharCount();
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            stopAudioAnalysis();
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            micIcon.textContent = '🎤';
+            micPulse.style.display = 'none';
+            micStatus.style.display = 'none';
+        };
+    } else {
+        // Browser doesn't support speech recognition
+        micBtn.style.display = 'none';
+    }
+
+    micBtn.addEventListener('click', () => {
+        if (!recognition) return;
+
+        if (isRecording) {
+            recognition.stop();
+        } else {
+            // Store current typed text before starting
+            answerInput.dataset.typedText = answerInput.value;
+            recognition.start();
+        }
+    });
+
+    // ==========================================
+    //  CORE INTERVIEW LOGIC
+    // ==========================================
+
+    function updateCharCount() {
+        const len = answerInput.value.trim().length;
+        charCount.textContent = len + ' characters';
+        submitBtn.disabled = len < 10;
+    }
+
+    // Load first question
+    resetVoiceMetrics();
+    loadQuestion();
+
+    // Character count
+    answerInput.addEventListener('input', () => {
+        answerInput.dataset.typedText = answerInput.value;
+        updateCharCount();
+    });
+
+    // Submit answer
+    submitBtn.addEventListener('click', submitAnswer);
+
+    // Next question
+    nextBtn.addEventListener('click', () => {
+        // Stop any ongoing speech
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        if (recognition && isRecording) recognition.stop();
+
+        feedbackCard.style.display = 'none';
+        questionCard.style.display = 'block';
+        answerInput.value = '';
+        answerInput.dataset.typedText = '';
+        charCount.textContent = '0 characters';
+        submitBtn.disabled = true;
+        voiceAnalysis.style.display = 'none';
+        resetVoiceMetrics();
+        loadQuestion();
+    });
+
+    async function loadQuestion() {
+        try {
+            const res = await fetch(`/interview/${SESSION_ID}/question/`);
+            const data = await res.json();
+
+            if (data.status === 'completed') {
+                loadingOverlay.style.display = 'flex';
+                window.location.href = data.redirect;
+                return;
+            }
+
+            currentQuestionId = data.question_id;
+            questionText.textContent = data.question_text;
+            questionSkill.textContent = data.skill;
+            questionDifficulty.textContent = data.difficulty.charAt(0).toUpperCase() + data.difficulty.slice(1);
+            questionDifficulty.className = 'question-difficulty diff-' + data.difficulty;
+            currentQ.textContent = data.question_number;
+            progressFill.style.width = data.progress + '%';
+            progressPercent.textContent = data.progress + '%';
+
+            // Animate card in
+            questionCard.classList.add('fade-in');
+            setTimeout(() => questionCard.classList.remove('fade-in'), 500);
+
+            // Auto-speak the question
+            setTimeout(() => speakQuestion(data.question_text), 600);
+
+            answerInput.focus();
+        } catch (err) {
+            questionText.textContent = 'Error loading question. Please refresh.';
+        }
+    }
+
+    async function submitAnswer() {
+        const answer = answerInput.value.trim();
+        if (answer.length < 10 || !currentQuestionId) return;
+
+        // Stop recording if active
+        if (recognition && isRecording) recognition.stop();
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+
+        const btnText = submitBtn.querySelector('.btn-text');
+        const btnLoader = submitBtn.querySelector('.btn-loader');
+        btnText.style.display = 'none';
+        btnLoader.style.display = 'inline-flex';
+        submitBtn.disabled = true;
+
+        try {
+            const res = await fetch(`/interview/${SESSION_ID}/answer/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_id: currentQuestionId,
+                    answer: answer,
+                }),
+            });
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                questionCard.style.display = 'none';
+                feedbackText.textContent = data.evaluation;
+
+                const score = data.score;
+                if (data.is_last) {
+                    feedbackScore.textContent = score;
+                    feedbackScoreCircle.style.display = 'flex';
+                    if (score >= 8) feedbackScoreCircle.className = 'feedback-score-circle score-high';
+                    else if (score >= 5) feedbackScoreCircle.className = 'feedback-score-circle score-mid';
+                    else feedbackScoreCircle.className = 'feedback-score-circle score-low';
+                } else {
+                    feedbackScoreCircle.style.display = 'none';
+                }
+
+                if (data.is_last) {
+                    nextBtnText.textContent = 'View Report →';
+                }
+
+                feedbackCard.style.display = 'block';
+                feedbackCard.classList.add('fade-in');
+                setTimeout(() => feedbackCard.classList.remove('fade-in'), 500);
+
+                renderVoiceAnalysis(lastVoiceAnalysis);
+
+                // Speak the evaluation feedback
+                if (data.is_last) {
+                    speakQuestion(`Score: ${score} out of 10. ${data.evaluation}`);
+                } else {
+                    speakQuestion(data.evaluation);
+                }
+            } else {
+                alert(data.message || 'Error submitting answer.');
+            }
+        } catch (err) {
+            alert('Network error. Please try again.');
+        } finally {
+            btnText.style.display = 'inline';
+            btnLoader.style.display = 'none';
+            submitBtn.disabled = false;
+        }
+    }
+</script>
+{% endblock %}
