@@ -10,7 +10,9 @@ SECRET_KEY = 'django-insecure-resume-bot-dev-key-change-in-production'
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if os.getenv("CSRF_TRUSTED_ORIGINS") else []
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -76,3 +78,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Groq API Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+
