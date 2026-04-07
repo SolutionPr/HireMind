@@ -4,3 +4,7 @@ i upload an resume the bot can analyse and generate question based on resume but
 after that bot can ask question for user one by one and take answer after that analyze the questin and answer and create a report based on that and generate an analysis report
 setup the project in django
 but the problem is that i have no paid api key
+
+
+
+
