@@ -57,7 +57,7 @@
                 <button class="btn btn-primary" id="submitAnswer" disabled>
                     <span class="btn-text">Submit Answer</span>
                     <span class="btn-loader" style="display: none;">
-                        <span class="spinner"></span> Evaluating...
+                        <span class="spinner"></span> Saving...
                     </span>
                 </button>
             </div>
@@ -508,23 +508,18 @@
             const data = await res.json();
 
             if (data.status === 'ok') {
+                if (data.is_last) {
+                    loadingOverlay.style.display = 'flex';
+                    window.location.href = `/interview/${SESSION_ID}/report/`;
+                    return;
+                }
+
                 questionCard.style.display = 'none';
-                feedbackText.textContent = data.evaluation;
+                feedbackText.textContent = data.message || 'Answer saved successfully.';
 
-                const score = data.score;
-                if (data.is_last) {
-                    feedbackScore.textContent = score;
-                    feedbackScoreCircle.style.display = 'flex';
-                    if (score >= 8) feedbackScoreCircle.className = 'feedback-score-circle score-high';
-                    else if (score >= 5) feedbackScoreCircle.className = 'feedback-score-circle score-mid';
-                    else feedbackScoreCircle.className = 'feedback-score-circle score-low';
-                } else {
-                    feedbackScoreCircle.style.display = 'none';
-                }
+                feedbackScoreCircle.style.display = 'none';
 
-                if (data.is_last) {
-                    nextBtnText.textContent = 'View Report →';
-                }
+                nextBtnText.textContent = 'Next Question →';
 
                 feedbackCard.style.display = 'block';
                 feedbackCard.classList.add('fade-in');
@@ -532,12 +527,7 @@
 
                 renderVoiceAnalysis(lastVoiceAnalysis);
 
-                // Speak the evaluation feedback
-                if (data.is_last) {
-                    speakQuestion(`Score: ${score} out of 10. ${data.evaluation}`);
-                } else {
-                    speakQuestion(data.evaluation);
-                }
+                speakQuestion(data.message || 'Answer saved successfully.');
             } else {
                 alert(data.message || 'Error submitting answer.');
             }
