@@ -85,6 +85,12 @@ class Answer(models.Model):
     answer_text = models.TextField()
     evaluation = models.TextField(blank=True, default='')
     score = models.IntegerField(null=True, blank=True)  # 1-10
+    # Voice analysis fields
+    voice_volume = models.CharField(max_length=20, blank=True, default='')
+    voice_rate = models.CharField(max_length=20, blank=True, default='')
+    voice_stability = models.CharField(max_length=20, blank=True, default='')
+    voice_confidence = models.CharField(max_length=20, blank=True, default='')
+    voice_wpm = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

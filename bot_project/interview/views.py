@@ -127,6 +127,7 @@ def submit_answer(request, session_id):
         data = json.loads(request.body)
         question_id = data.get('question_id')
         answer_text = data.get('answer', '').strip()
+        voice_data = data.get('voice', {})  # Optional voice analysis data
     except (json.JSONDecodeError, AttributeError):
         return JsonResponse({'status': 'error', 'message': 'Invalid request data.'}, status=400)
 
@@ -151,6 +152,11 @@ def submit_answer(request, session_id):
         answer_text=answer_text,
         evaluation=evaluation['evaluation'],
         score=evaluation['score'],
+        voice_volume=voice_data.get('volume', ''),
+        voice_rate=voice_data.get('rate', ''),
+        voice_stability=voice_data.get('stability', ''),
+        voice_confidence=voice_data.get('confidence', ''),
+        voice_wpm=voice_data.get('wpm'),
     )
 
     # Check if all questions are answered

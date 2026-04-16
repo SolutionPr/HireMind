@@ -17,12 +17,11 @@
 
     <div class="progress-container">
         <div class="progress-bar">
-            <div class="progress-fill" id="progressFill" style="width: {{ session.progress_percent }}%"></div>
+            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
         </div>
         <div class="progress-text">
-            <span id="progressText">Question <span id="currentQ">{{ session.current_question_index|add:1 }}</span> of {{
-                session.total_questions }}</span>
-            <span id="progressPercent">{{ session.progress_percent }}%</span>
+            <span id="progressText">Question <span id="currentQ">1</span> of <span id="totalQ">10</span></span>
+            <span id="progressPercent">0%</span>
         </div>
     </div>
 
@@ -277,6 +276,7 @@
     const progressFill = document.getElementById('progressFill');
     const progressPercent = document.getElementById('progressPercent');
     const currentQ = document.getElementById('currentQ');
+    const totalQ = document.getElementById('totalQ');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const speakBtn = document.getElementById('speakBtn');
     const micBtn = document.getElementById('micBtn');
@@ -464,6 +464,7 @@
             questionDifficulty.textContent = data.difficulty.charAt(0).toUpperCase() + data.difficulty.slice(1);
             questionDifficulty.className = 'question-difficulty diff-' + data.difficulty;
             currentQ.textContent = data.question_number;
+            totalQ.textContent = data.total_questions;
             progressFill.style.width = data.progress + '%';
             progressPercent.textContent = data.progress + '%';
 
@@ -501,6 +502,7 @@
                 body: JSON.stringify({
                     question_id: currentQuestionId,
                     answer: answer,
+                    voice: lastVoiceAnalysis,  // Include voice analysis data
                 }),
             });
             const data = await res.json();
