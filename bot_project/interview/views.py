@@ -120,14 +120,16 @@ def get_current_question(request, session_id):
 @csrf_exempt
 @require_http_methods(["POST"])
 def submit_answer(request, session_id):
-    """API endpoint: submit an answer, get it evaluated."""
+    """API endpoint: submit an answer without evaluating it immediately."""
     session = get_object_or_404(InterviewSession, pk=session_id)
 
     try:
         data = json.loads(request.body)
         question_id = data.get('question_id')
         answer_text = data.get('answer', '').strip()
-        voice_data = data.get('voice', {})  # Optional voice analysis data
+        voice_data = data.get('voice') or {}
+        if not isinstance(voice_data, dict):
+            voice_data = {}
     except (json.JSONDecodeError, AttributeError):
         return JsonResponse({'status': 'error', 'message': 'Invalid request data.'}, status=400)
 
@@ -136,22 +138,10 @@ def submit_answer(request, session_id):
 
     question = get_object_or_404(Question, pk=question_id, session=session)
 
-    # Evaluate the answer using Gemini
-    try:
-        evaluation = gemini_service.evaluate_answer(
-            question.question_text,
-            answer_text,
-            question.skill_category,
-        )
-    except Exception:
-        evaluation = {'score': 5, 'evaluation': 'Could not evaluate. Please continue.'}
-
     # Save the answer
     Answer.objects.create(
         question=question,
         answer_text=answer_text,
-        evaluation=evaluation['evaluation'],
-        score=evaluation['score'],
         voice_volume=voice_data.get('volume', ''),
         voice_rate=voice_data.get('rate', ''),
         voice_stability=voice_data.get('stability', ''),
@@ -164,8 +154,7 @@ def submit_answer(request, session_id):
 
     return JsonResponse({
         'status': 'ok',
-        'score': evaluation['score'],
-        'evaluation': evaluation['evaluation'],
+        'message': 'Answer saved successfully.' if unanswered_count > 0 else 'Answer saved. Generating your final report.',
         'is_last': unanswered_count == 0,
     })
 
@@ -177,6 +166,18 @@ def interview_report(request, session_id):
     # Generate report if not already done
     if not session.report_text or session.status != 'completed':
         try:
+            answers = Answer.objects.filter(question__session=session).select_related('question')
+            for answer in answers:
+                if answer.score is None or not answer.evaluation:
+                    evaluation = gemini_service.evaluate_answer(
+                        answer.question.question_text,
+                        answer.answer_text,
+                        answer.question.skill_category,
+                    )
+                    answer.score = evaluation['score']
+                    answer.evaluation = evaluation['evaluation']
+                    answer.save(update_fields=['score', 'evaluation'])
+
             report_data = gemini_service.generate_report(session)
             session.report_text = report_data['report_text']
             session.overall_score = report_data['overall_score']
